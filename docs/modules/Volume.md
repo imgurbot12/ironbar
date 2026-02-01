@@ -14,12 +14,19 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
 | Name                            | Type                                                 | Default                | Description                                                                                                                       |
 |---------------------------------|------------------------------------------------------|------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `format`                        | `string`                                             | `{icon} {percentage}%` | Format string to use for the widget button label.                                                                                 |
+| `mute_format`                   | `string`                                             | `{icon} {percentage}%` | Variant format string to use for the widget button label when muted.                                                              |
+| `popup_orientation`             | `'vertical'` or `'horizontal'`                       | `horizontal`           | The orientation of the popup elements.                                                                                            |
 | `sink_slider_orientation`       | `'vertical'` or `'horizontal'`                       | `vertical`             | The orientation of the sink slider.                                                                                               |
+| `source_slider_orientation`     | `'vertical'` or `'horizontal'`                       | `vertical`             | The orientation of the source slider.                                                                                             |
 | `max_volume`                    | `float`                                              | `100`                  | Maximum value to allow volume sliders to reach. Pulse supports values > 100 but this may result in distortion.                    |
 | `icons.volume_high`             | `string`                                             | `󰕾`                    | Icon to show for high volume levels.                                                                                              |
 | `icons.volume_medium`           | `string`                                             | `󰖀`                    | Icon to show for medium volume levels.                                                                                            |
 | `icons.volume_low`              | `string`                                             | `󰕿`                    | Icon to show for low volume levels.                                                                                               |
-| `icons.muted`                   | `string`                                             | `󰝟`                    | Icon to show for muted outputs.                                                                                                   |
+| `icons.volume_muted`            | `string`                                             | `󰝟`                    | Icon to show for muted outputs.                                                                                                   |
+| `icons.mic_high`                | `string`                                             | ``                    | Icon to show for high microphone volume levels.                                                                                   |
+| `icons.mic_medium`              | `string`                                             | ``                    | Icon to show for medium microphone volume levels.                                                                                 |
+| `icons.mic_low`                 | `string`                                             | ``                    | Icon to show for low volume microphone volume levels.                                                                             |
+| `icons.mic_muted`               | `string`                                             | ``                    | Icon to show for muted inputs.                                                                                                    |
 | `truncate`                      | `'start'` or `'middle'` or `'end'` or `off` or `Map` | `off`                  | The location of the ellipses and where to truncate text from. Leave null to avoid truncating. Use the long-hand `Map` version if specifying a length. Takes precedence over `marquee` if both are configured. |
 | `truncate.mode`                 | `'start'` or `'middle'` or `'end'` or `off`          | `off`                  | The location of the ellipses and where to truncate text from. Leave null to avoid truncating.                                     |
 | `truncate.length`               | `integer`                                            | `null`                 | The fixed width (in chars) of the widget. Leave blank to let GTK automatically handle.                                            |
@@ -41,7 +48,10 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
     {
       "type": "volume",
       "format": "{icon} {percentage}%",
+      "mute_format": "{icon} {percentage}%",
+      "popup_orientation": "horizontal",
       "sink_slider_orientation": "vertical",
+      "source_slider_orientation": "vertical",
       "max_volume": 100,
       "truncate": "middle",
       "icons": {
@@ -65,7 +75,10 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
 [[end]]
 type = "volume"
 format = "{icon} {percentage}%"
+mute_format = "{icon} {percentage}%"
+popup_orientation = "horizontal"
 sink_slider_orientation = "vertical"
+source_slider_orientation = "vertical"
 max_volume = 100
 truncate = "middle"
 
@@ -73,7 +86,11 @@ truncate = "middle"
 volume_high = "󰕾"
 volume_medium = "󰖀"
 volume_low = "󰕿"
-muted = "󰝟"
+volume_muted = "󰝟"
+mic_high = ""
+mic_medium = ""
+mic_low = ""
+mic_muted = ""
 ```
 
 </details>
@@ -85,14 +102,22 @@ muted = "󰝟"
 end:
   - type: "volume"
     format: "{icon} {percentage}%"
+    mute_format: "{icon} {percentage}%"
     sink_slider_orientation: "vertical"
+    popup_orientation: "horizontal"
+    sink_slider_orientation: "vertical"
+    source_slider_orientation: "vertical"
     max_volume: 100
     truncate: "middle"
     icons:
       volume_high: "󰕾"
       volume_medium: "󰖀"
       volume_low: "󰕿"
-      muted: "󰝟"
+      volume_muted: "󰝟"
+      mic_high: ""
+      mic_medium: ""
+      mic_low: ""
+      mic_muted: ""
 ```
 
 </details>
@@ -106,13 +131,20 @@ end:
     {
       type = "volume"
       format = "{icon} {percentage}%"
+      mute_format = "{icon} {percentage}%"
+      popup_oorientation = "horizontal"
       sink_slider_orientation = "vertical"
+      source_slider_orientation = "vertical"
       max_volume = 100
       truncate = "end"
       icons.volume_high = "󰕾"
       icons.volume_medium = "󰖀"
       icons.volume_low = "󰕿"
-      icons.muted = "󰝟"
+      icons.volume_muted = "󰝟"
+      icons.mic_high = ""
+      icons.mic_medium = ""
+      icons.mic_low = ""
+      icons.mic_muted = ""
     }
   ]
 }
@@ -137,6 +169,8 @@ The following tokens can be used in the `format` config option:
 | `.volume`                                    | Volume widget button.                              |
 | `.popup-volume`                              | Volume popup box.                                  |
 | `.popup-volume .device-box`                  | Box for the device volume controls.                |
+| `.popup-volume .device-box .sink-box`        | Box for the sink volume controls.                  |
+| `.popup-volume .device-box .source-box`      | Box for the source volume controls.                |
 | `.popup-volume .device-box .device-selector` | Default device dropdown selector.                  |
 | `.popup-volume .device-box .slider`          | Device volume slider.                              |
 | `.popup-volume .device-box .btn-mute`        | Device volume mute toggle button.                  |

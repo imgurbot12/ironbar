@@ -29,10 +29,26 @@ pub struct VolumeModule {
     /// **Default**: `{icon} {percentage}%`
     format: String,
 
+    /// The format string to use for the widget button label when muted.
+    /// For available tokens, see [below](#formatting-tokens).
+    ///
+    /// **Default**: `{icon} {percentage}%`
+    mute_format: String,
+
+    /// The orientation of elements in popup
+    ///
+    /// **Default**: horizontal
+    popup_orientation: ModuleOrientation,
+
     /// The orientation of the sink slider
     ///
     /// **Default**: vertical
     sink_slider_orientation: ModuleOrientation,
+
+    /// The orientation of the source slider
+    ///
+    /// **Default**: vertical
+    source_slider_orientation: ModuleOrientation,
 
     /// Maximum value to allow volume sliders to reach.
     /// Pulse supports values > 100 but this may result in distortion.
@@ -68,7 +84,10 @@ impl Default for VolumeModule {
     fn default() -> Self {
         Self {
             format: "{icon} {percentage}%".to_string(),
+            mute_format: "{icon} {percentage}".to_string(),
+            popup_orientation: ModuleOrientation::Horizontal,
             sink_slider_orientation: ModuleOrientation::Vertical,
+            source_slider_orientation: ModuleOrientation::Vertical,
             max_volume: 100.0,
             icons: Icons::default(),
             truncate: None,
@@ -101,7 +120,27 @@ pub struct Icons {
     /// Icon to show for muted outputs.
     ///
     /// **Default**: `󰝟`
-    muted: String,
+    volume_muted: String,
+
+    /// Icon to show for high mic levels.
+    ///
+    /// **Default**: ``
+    mic_high: String,
+
+    /// Icon to show for medium mic levels.
+    ///
+    /// **Default**: ``
+    mic_medium: String,
+
+    /// Icon to show for low mic levels.
+    ///
+    /// **Default**: ``
+    mic_low: String,
+
+    /// Icon to show for muted inputs.
+    ///
+    /// **Default**: ``
+    mic_muted: String,
 }
 
 impl Default for Icons {
@@ -110,17 +149,34 @@ impl Default for Icons {
             volume_high: "󰕾".to_string(),
             volume_medium: "󰖀".to_string(),
             volume_low: "󰕿".to_string(),
-            muted: "󰝟".to_string(),
+            volume_muted: "󰝟".to_string(),
+            mic_high: "".to_string(),
+            mic_medium: "".to_string(),
+            mic_low: "".to_string(),
+            mic_muted: "".to_string(),
         }
     }
 }
 
 impl Icons {
-    fn volume_icon(&self, volume_percent: f64) -> &str {
+    fn volume_icon(&self, muted: bool, volume_percent: f64) -> &str {
+        if muted {
+            return &self.volume_muted;
+        }
         match volume_percent as u32 {
             0..=33 => &self.volume_low,
             34..=66 => &self.volume_medium,
             67.. => &self.volume_high,
+        }
+    }
+    fn mic_icon(&self, muted: bool, volume_percent: f64) -> &str {
+        if muted {
+            return &self.mic_muted;
+        }
+        match volume_percent as u32 {
+            0..=33 => &self.mic_low,
+            34..=66 => &self.mic_medium,
+            67.. => &self.mic_high,
         }
     }
 }
@@ -131,8 +187,15 @@ pub enum Update {
     SinkVolume(String, f64),
     SinkMute(String, bool),
 
+    SourceChange(String),
+    SourceVolume(String, f64),
+    SourceMute(String, bool),
+
     InputVolume(u32, f64),
     InputMute(u32, bool),
+
+    OutputVolume(u32, f64),
+    OutputMute(u32, bool),
 }
 
 glib::wrapper! {
@@ -196,7 +259,15 @@ impl Module<Button> for VolumeModule {
                     sinks.iter().cloned().collect::<Vec<_>>()
                 };
 
-                trace!("initial syncs: {sinks:?}");
+                trace!("initial sinks: {sinks:?}");
+
+                let sources = {
+                    let sources = client.sources();
+                    let sources = lock!(sources);
+                    sources.iter().cloned().collect::<Vec<_>>()
+                };
+
+                trace!("initial sources: {sources:?}");
 
                 let inputs = {
                     let inputs = client.sink_inputs();
@@ -206,12 +277,25 @@ impl Module<Button> for VolumeModule {
 
                 trace!("initial inputs: {inputs:?}");
 
+                let outputs = {
+                    let outputs = client.source_outputs();
+                    let outputs = lock!(outputs);
+                    outputs.iter().cloned().collect::<Vec<_>>()
+                };
+
+                trace!("initial outputs: {outputs:?}");
+
                 for sink in sinks {
                     tx.send_update(Event::AddSink(sink)).await;
                 }
-
+                for source in sources {
+                    tx.send_update(Event::AddSource(source)).await;
+                }
                 for input in inputs {
                     tx.send_update(Event::AddInput(input)).await;
+                }
+                for output in outputs {
+                    tx.send_update(Event::AddOutput(output)).await;
                 }
 
                 // recv loop
@@ -229,8 +313,13 @@ impl Module<Button> for VolumeModule {
                     Update::SinkChange(name) => client.set_default_sink(&name),
                     Update::SinkVolume(name, volume) => client.set_sink_volume(&name, volume),
                     Update::SinkMute(name, muted) => client.set_sink_muted(&name, muted),
+                    Update::SourceChange(name) => client.set_default_source(&name),
+                    Update::SourceVolume(name, volume) => client.set_source_volume(&name, volume),
+                    Update::SourceMute(name, muted) => client.set_source_muted(&name, muted),
                     Update::InputVolume(index, volume) => client.set_input_volume(index, volume),
                     Update::InputMute(index, muted) => client.set_input_muted(index, muted),
+                    Update::OutputVolume(index, volume) => client.set_output_volume(index, volume),
+                    Update::OutputMute(index, muted) => client.set_output_muted(index, muted),
                 }
             }
         });
@@ -246,41 +335,69 @@ impl Module<Button> for VolumeModule {
     where
         <Self as Module<Button>>::SendMessage: Clone,
     {
-        let button_label = Label::builder()
+        let sink_label = Label::builder()
             .use_markup(true)
             .justify(self.layout.justify.into())
             .build();
 
+        let source_label = Label::builder()
+            .use_markup(true)
+            .justify(self.layout.justify.into())
+            .build();
+
+        let container = gtk::Box::new(Orientation::Horizontal, 5);
+        container.append(&sink_label);
+        container.append(&source_label);
+
         let button = Button::new();
-        button.set_child(Some(&button_label));
+        button.set_child(Some(&container));
 
         {
             let tx = context.tx.clone();
-
             button.connect_clicked(move |button| {
                 tx.send_spawn(ModuleUpdateEvent::TogglePopup(button.popup_id()));
             });
         }
 
         let rx = context.subscribe();
-
         rx.recv_glib(
-            (&self.icons, &self.format),
-            move |(icons, format), event| match event {
+            (&self.icons, &self.format, &self.mute_format),
+            move |(icons, format, mute_format), event| match event {
                 Event::AddSink(sink) | Event::UpdateSink(sink) if sink.active => {
-                    let label = format
+                    let fmt = if sink.muted {
+                        sink_label.add_css_class("muted");
+                        mute_format
+                    } else {
+                        sink_label.remove_css_class("muted");
+                        format
+                    };
+                    let label = fmt
                         .replace(
                             "{icon}",
-                            if sink.muted {
-                                &icons.muted
-                            } else {
-                                icons.volume_icon(sink.volume.percent())
-                            },
+                            icons.volume_icon(sink.muted, sink.volume.percent()),
                         )
                         .replace("{percentage}", &sink.volume.percent().to_string())
                         .replace("{name}", &sink.description);
 
-                    button_label.set_label_escaped(&label);
+                    sink_label.set_label_escaped(&label);
+                }
+                Event::AddSource(source) | Event::UpdateSource(source) if source.active => {
+                    let fmt = if source.muted {
+                        source_label.add_css_class("muted");
+                        mute_format
+                    } else {
+                        source_label.remove_css_class("muted");
+                        format
+                    };
+                    let label = fmt
+                        .replace(
+                            "{icon}",
+                            icons.mic_icon(source.muted, source.volume.percent()),
+                        )
+                        .replace("{percentage}", &source.volume.percent().to_string())
+                        .replace("{name}", &source.description);
+
+                    source_label.set_label_escaped(&label);
                 }
                 _ => {}
             },
@@ -301,18 +418,35 @@ impl Module<Button> for VolumeModule {
     where
         Self: Sized,
     {
-        let container = gtk::Box::new(Orientation::Horizontal, 10);
+        let container = gtk::Box::new(self.popup_orientation.into(), 10);
 
         let sink_container = gtk::Box::new(Orientation::Vertical, 5);
-        sink_container.add_css_class("device-box");
+        sink_container.add_css_class("sink-box");
+
+        let source_container = gtk::Box::new(Orientation::Vertical, 5);
+        source_container.add_css_class("source-box");
+
+        let device_container = gtk::Box::new(Orientation::Vertical, 5);
+        device_container.add_css_class("device-box");
+        device_container.append(&sink_container);
+        device_container.append(&source_container);
 
         let input_container = gtk::Box::new(Orientation::Vertical, 5);
-        input_container.add_css_class("apps-box");
+        input_container.add_css_class("input-box");
 
-        container.append(&sink_container);
-        container.append(&input_container);
+        let output_container = gtk::Box::new(Orientation::Vertical, 5);
+        output_container.add_css_class("output-box");
 
-        let options = gio::ListStore::new::<DropdownItem>();
+        let app_container = gtk::Box::new(Orientation::Vertical, 5);
+        app_container.add_css_class("apps-box");
+        app_container.append(&input_container);
+        app_container.append(&output_container);
+
+        container.append(&device_container);
+        container.append(&app_container);
+
+        let sink_options = gio::ListStore::new::<DropdownItem>();
+        let source_options = gio::ListStore::new::<DropdownItem>();
         let factory = SignalListItemFactory::new();
         factory.connect_setup(move |_, list_item| {
             let label = Label::new(None);
@@ -322,6 +456,7 @@ impl Module<Button> for VolumeModule {
                 .set_child(Some(&label));
         });
 
+        let truncate = self.truncate;
         factory.connect_bind(move |_, list_item| {
             let dropdown_item = list_item
                 .downcast_ref::<ListItem>()
@@ -338,11 +473,15 @@ impl Module<Button> for VolumeModule {
                 .expect("should be a `Label`.");
 
             label.set_label(&dropdown_item.value().to_string());
+            if let Some(truncate) = truncate {
+                label.truncate(truncate);
+            }
         });
 
-        let sink_selector = DropDown::new(Some(options.clone()), None::<Expression>);
+        let sink_selector = DropDown::new(Some(sink_options.clone()), None::<Expression>);
         sink_selector.set_factory(Some(&factory));
         sink_selector.add_css_class("device-selector");
+        sink_selector.add_css_class("sink-selector");
 
         {
             let tx = context.controller_tx.clone();
@@ -356,7 +495,24 @@ impl Module<Button> for VolumeModule {
 
         sink_container.append(&sink_selector);
 
-        let slider = match self.sink_slider_orientation {
+        let source_selector = DropDown::new(Some(source_options.clone()), None::<Expression>);
+        source_selector.set_factory(Some(&factory));
+        source_selector.add_css_class("device-selector");
+        source_selector.add_css_class("source-selector");
+
+        {
+            let tx = context.controller_tx.clone();
+
+            source_selector.connect_selected_notify(move |selector| {
+                if let Some(item) = selector.selected_item().and_downcast_ref::<DropdownItem>() {
+                    tx.send_spawn(Update::SourceChange(item.key()));
+                }
+            });
+        }
+
+        source_container.append(&source_selector);
+
+        let sink_slider = match self.sink_slider_orientation {
             ModuleOrientation::Horizontal => Scale::builder()
                 .orientation(Orientation::Horizontal)
                 .build(),
@@ -367,17 +523,18 @@ impl Module<Button> for VolumeModule {
                 .build(),
         };
 
-        slider.add_css_class("slider");
+        sink_slider.add_css_class("slider");
+        sink_slider.add_css_class("sink-slider");
 
-        slider.set_range(0.0, self.max_volume);
-        slider.set_value(50.0);
-        sink_container.append(&slider);
+        sink_slider.set_range(0.0, self.max_volume);
+        sink_slider.set_value(50.0);
+        sink_container.append(&sink_slider);
 
         {
             let tx = context.controller_tx.clone();
             let selector = sink_selector.clone();
 
-            let scale = slider.clone();
+            let scale = sink_slider.clone();
             scale.connect_value_changed(move |scale| {
                 if scale.has_css_class("dragging")
                     && let Some(sink) = selector.selected_item().and_downcast_ref::<DropdownItem>()
@@ -389,15 +546,51 @@ impl Module<Button> for VolumeModule {
             });
         }
 
-        let btn_mute = ToggleButton::new();
-        btn_mute.add_css_class("btn-mute");
-        sink_container.append(&btn_mute);
+        let source_slider = match self.source_slider_orientation {
+            ModuleOrientation::Horizontal => Scale::builder()
+                .orientation(Orientation::Horizontal)
+                .build(),
+            ModuleOrientation::Vertical => Scale::builder()
+                .orientation(Orientation::Vertical)
+                .height_request(100)
+                .inverted(true)
+                .build(),
+        };
+
+        source_slider.add_css_class("slider");
+        source_slider.add_css_class("source-slider");
+
+        source_slider.set_range(0.0, self.max_volume);
+        source_slider.set_value(50.0);
+        source_container.append(&source_slider);
+
+        {
+            let tx = context.controller_tx.clone();
+            let selector = source_selector.clone();
+
+            let scale = source_slider.clone();
+            scale.connect_value_changed(move |scale| {
+                if scale.has_css_class("dragging")
+                    && let Some(source) =
+                        selector.selected_item().and_downcast_ref::<DropdownItem>()
+                {
+                    // GTK will send values outside min/max range
+                    let val = scale.value().clamp(0.0, self.max_volume);
+                    tx.send_spawn(Update::SourceVolume(source.key(), val));
+                }
+            });
+        }
+
+        let sink_mute = ToggleButton::new();
+        sink_mute.add_css_class("btn-mute");
+        sink_mute.add_css_class("sink-mute");
+        sink_container.append(&sink_mute);
 
         {
             let tx = context.controller_tx.clone();
             let selector = sink_selector.clone();
 
-            btn_mute.connect_toggled(move |btn| {
+            sink_mute.connect_toggled(move |btn| {
                 if let Some(sink) = selector.selected_item().and_downcast_ref::<DropdownItem>() {
                     let muted = btn.is_active();
                     tx.send_spawn(Update::SinkMute(sink.key(), muted));
@@ -405,60 +598,106 @@ impl Module<Button> for VolumeModule {
             });
         }
 
+        let source_mute = ToggleButton::new();
+        source_mute.add_css_class("btn-mute");
+        source_mute.add_css_class("source-mute");
+        source_container.append(&source_mute);
+
+        {
+            let tx = context.controller_tx.clone();
+            let selector = source_selector.clone();
+
+            source_mute.connect_toggled(move |btn| {
+                if let Some(source) = selector.selected_item().and_downcast_ref::<DropdownItem>() {
+                    let muted = btn.is_active();
+                    tx.send_spawn(Update::SourceMute(source.key(), muted));
+                }
+            });
+        }
+
         let mut inputs = HashMap::new();
+        let mut outputs = HashMap::new();
         let mut sinks = vec![];
+        let mut sources = vec![];
 
         context
             .subscribe()
             .recv_glib(&input_container, move |input_container, event| {
                 match event {
                     Event::AddSink(info) => {
-                        options.append(&DropdownItem::new(&info.name, &info.description));
+                        sink_options.append(&DropdownItem::new(&info.name, &info.description));
 
                         if info.active {
                             sink_selector.set_selected(sinks.len() as u32);
-                            slider.set_value(info.volume.percent());
+                            sink_slider.set_value(info.volume.percent());
 
-                            btn_mute.set_active(info.muted);
-                            btn_mute.set_label(if info.muted {
-                                &self.icons.muted
-                            } else {
-                                self.icons.volume_icon(info.volume.percent())
-                            });
+                            sink_mute.set_active(info.muted);
+                            sink_mute.set_label(
+                                self.icons.volume_icon(info.muted, info.volume.percent()),
+                            );
                         }
-
                         sinks.push(info);
+                    }
+                    Event::AddSource(info) => {
+                        source_options.append(&DropdownItem::new(&info.name, &info.description));
+
+                        if info.active {
+                            source_selector.set_selected(sources.len() as u32);
+                            source_slider.set_value(info.volume.percent());
+
+                            source_mute.set_active(info.muted);
+                            source_mute
+                                .set_label(self.icons.mic_icon(info.muted, info.volume.percent()));
+                        }
+                        sources.push(info);
                     }
                     Event::UpdateSink(info) => {
                         if info.active
                             && let Some(pos) = sinks.iter().position(|s| s.name == info.name)
                         {
                             sink_selector.set_selected(pos as u32);
-
-                            if !slider.has_css_class("dragging") {
-                                slider.set_value(info.volume.percent());
+                            if !sink_slider.has_css_class("dragging") {
+                                sink_slider.set_value(info.volume.percent());
                             }
 
-                            btn_mute.set_active(info.muted);
-                            btn_mute.set_label(if info.muted {
-                                &self.icons.muted
-                            } else {
-                                self.icons.volume_icon(info.volume.percent())
-                            });
+                            sink_mute.set_active(info.muted);
+                            sink_mute.set_label(
+                                self.icons.volume_icon(info.muted, info.volume.percent()),
+                            );
+                        }
+                    }
+                    Event::UpdateSource(info) => {
+                        if info.active
+                            && let Some(pos) = sources.iter().position(|s| s.name == info.name)
+                        {
+                            source_selector.set_selected(pos as u32);
+                            if !source_slider.has_css_class("dragging") {
+                                source_slider.set_value(info.volume.percent());
+                            }
+
+                            source_mute.set_active(info.muted);
+                            source_mute
+                                .set_label(self.icons.mic_icon(info.muted, info.volume.percent()));
                         }
                     }
                     Event::RemoveSink(name) => {
                         if let Some(pos) = sinks.iter().position(|s| s.name == name) {
-                            options.remove(pos as u32);
+                            sink_options.remove(pos as u32);
                             sinks.remove(pos);
                         }
                     }
-
+                    Event::RemoveSource(name) => {
+                        if let Some(pos) = sources.iter().position(|s| s.name == name) {
+                            source_options.remove(pos as u32);
+                            sources.remove(pos);
+                        }
+                    }
                     Event::AddInput(info) => {
                         let index = info.index;
 
                         let item_container = gtk::Box::new(Orientation::Vertical, 0);
                         item_container.add_css_class("app-box");
+                        item_container.add_css_class("input-box");
 
                         let title_label = OverflowLabel::new(
                             Label::new(None),
@@ -473,7 +712,6 @@ impl Module<Button> for VolumeModule {
                         slider.set_range(0.0, self.max_volume);
                         slider.set_value(info.volume.percent());
                         slider.add_css_class("slider");
-
                         {
                             let tx = context.controller_tx.clone();
                             slider.connect_value_changed(move |scale| {
@@ -487,14 +725,10 @@ impl Module<Button> for VolumeModule {
 
                         let btn_mute = ToggleButton::new();
                         btn_mute.add_css_class("btn-mute");
-
+                        btn_mute.add_css_class("sink-mute");
                         btn_mute.set_active(info.muted);
-                        btn_mute.set_label(if info.muted {
-                            &self.icons.muted
-                        } else {
-                            self.icons.volume_icon(info.volume.percent())
-                        });
-
+                        btn_mute
+                            .set_label(self.icons.volume_icon(info.muted, info.volume.percent()));
                         {
                             let tx = context.controller_tx.clone();
                             btn_mute.connect_toggled(move |btn| {
@@ -505,12 +739,70 @@ impl Module<Button> for VolumeModule {
 
                         item_container.append(&slider);
                         item_container.append(&btn_mute);
-
                         input_container.append(&item_container);
 
                         inputs.insert(
                             info.index,
-                            InputUi {
+                            VolumeUi {
+                                container: item_container,
+                                title_label,
+                                slider,
+                                btn_mute,
+                                label_raw: info.name.clone(),
+                            },
+                        );
+                    }
+                    Event::AddOutput(info) => {
+                        let index = info.index;
+
+                        let item_container = gtk::Box::new(Orientation::Vertical, 0);
+                        item_container.add_css_class("app-box");
+                        item_container.add_css_class("output-box");
+
+                        let title_label = OverflowLabel::new(
+                            Label::new(None),
+                            self.truncate,
+                            self.marquee.clone(),
+                        );
+                        title_label.label().add_css_class("title");
+                        title_label.set_label_escaped(&info.name);
+                        item_container.append(title_label.widget());
+
+                        let slider = Scale::builder().sensitive(info.can_set_volume).build();
+                        slider.set_range(0.0, self.max_volume);
+                        slider.set_value(info.volume.percent());
+                        slider.add_css_class("slider");
+                        {
+                            let tx = context.controller_tx.clone();
+                            slider.connect_value_changed(move |scale| {
+                                if scale.has_css_class("dragging") {
+                                    // GTK will send values outside min/max range
+                                    let val = scale.value().clamp(0.0, self.max_volume);
+                                    tx.send_spawn(Update::OutputVolume(index, val));
+                                }
+                            });
+                        }
+
+                        let btn_mute = ToggleButton::new();
+                        btn_mute.add_css_class("btn-mute");
+                        btn_mute.add_css_class("source-mute");
+                        btn_mute.set_active(info.muted);
+                        btn_mute.set_label(self.icons.mic_icon(info.muted, info.volume.percent()));
+                        {
+                            let tx = context.controller_tx.clone();
+                            btn_mute.connect_toggled(move |btn| {
+                                let muted = btn.is_active();
+                                tx.send_spawn(Update::OutputMute(index, muted));
+                            });
+                        }
+
+                        item_container.append(&slider);
+                        item_container.append(&btn_mute);
+                        output_container.append(&item_container);
+
+                        outputs.insert(
+                            info.index,
+                            VolumeUi {
                                 container: item_container,
                                 title_label,
                                 slider,
@@ -531,16 +823,35 @@ impl Module<Button> for VolumeModule {
                             }
 
                             ui.slider.set_sensitive(info.can_set_volume);
-                            ui.btn_mute.set_label(if info.muted {
-                                &self.icons.muted
-                            } else {
-                                self.icons.volume_icon(info.volume.percent())
-                            });
+                            ui.btn_mute.set_label(
+                                self.icons.volume_icon(info.muted, info.volume.percent()),
+                            );
+                        }
+                    }
+                    Event::UpdateOutput(info) => {
+                        if let Some(ui) = outputs.get_mut(&info.index) {
+                            if ui.label_raw != info.name {
+                                ui.title_label.set_label_escaped(&info.name);
+                                ui.label_raw = info.name.clone();
+                            }
+
+                            if !ui.slider.has_css_class("dragging") {
+                                ui.slider.set_value(info.volume.percent());
+                            }
+
+                            ui.slider.set_sensitive(info.can_set_volume);
+                            ui.btn_mute
+                                .set_label(self.icons.mic_icon(info.muted, info.volume.percent()));
                         }
                     }
                     Event::RemoveInput(index) => {
                         if let Some(ui) = inputs.remove(&index) {
                             input_container.remove(&ui.container);
+                        }
+                    }
+                    Event::RemoveOutput(index) => {
+                        if let Some(ui) = outputs.remove(&index) {
+                            output_container.remove(&ui.container);
                         }
                     }
                 }
@@ -550,7 +861,7 @@ impl Module<Button> for VolumeModule {
     }
 }
 
-struct InputUi {
+struct VolumeUi {
     container: gtk::Box,
     title_label: OverflowLabel,
     slider: Scale,
