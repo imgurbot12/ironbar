@@ -14,6 +14,7 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
 | Name                            | Type                                                 | Default                | Description                                                                                                                       |
 |---------------------------------|------------------------------------------------------|------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | `format`                        | `string`                                             | `{icon} {percentage}%` | Format string to use for the widget button label.                                                                                 |
+| `mute_format`                   | `string`                                             | `{icon} {percentage}%` | Variant format string to use for the widget button label when muted.                                                              |
 | `popup_orientation`             | `'vertical'` or `'horizontal'`                       | `horizontal`           | The orientation of the popup elements.                                                                                            |
 | `sink_slider_orientation`       | `'vertical'` or `'horizontal'`                       | `vertical`             | The orientation of the sink slider.                                                                                               |
 | `source_slider_orientation`     | `'vertical'` or `'horizontal'`                       | `vertical`             | The orientation of the source slider.                                                                                             |
@@ -47,6 +48,7 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
     {
       "type": "volume",
       "format": "{icon} {percentage}%",
+      "mute_format": "{icon} {percentage}%",
       "popup_orientation": "horizontal",
       "sink_slider_orientation": "vertical",
       "source_slider_orientation": "vertical",
@@ -73,6 +75,7 @@ This requires PulseAudio to function (`pipewire-pulse` is supported).
 [[end]]
 type = "volume"
 format = "{icon} {percentage}%"
+mute_format = "{icon} {percentage}%"
 popup_orientation = "horizontal"
 sink_slider_orientation = "vertical"
 source_slider_orientation = "vertical"
@@ -99,6 +102,7 @@ mic_muted = ""
 end:
   - type: "volume"
     format: "{icon} {percentage}%"
+    mute_format: "{icon} {percentage}%"
     sink_slider_orientation: "vertical"
     popup_orientation: "horizontal"
     sink_slider_orientation: "vertical"
@@ -127,6 +131,7 @@ end:
     {
       type = "volume"
       format = "{icon} {percentage}%"
+      mute_format = "{icon} {percentage}%"
       popup_oorientation = "horizontal"
       sink_slider_orientation = "vertical"
       source_slider_orientation = "vertical"

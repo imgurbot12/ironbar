@@ -29,6 +29,12 @@ pub struct VolumeModule {
     /// **Default**: `{icon} {percentage}%`
     format: String,
 
+    /// The format string to use for the widget button label when muted.
+    /// For available tokens, see [below](#formatting-tokens).
+    ///
+    /// **Default**: `{icon} {percentage}%`
+    mute_format: String,
+
     /// The orientation of elements in popup
     ///
     /// **Default**: horizontal
@@ -78,6 +84,7 @@ impl Default for VolumeModule {
     fn default() -> Self {
         Self {
             format: "{icon} {percentage}%".to_string(),
+            mute_format: "{icon} {percentage}".to_string(),
             popup_orientation: ModuleOrientation::Horizontal,
             sink_slider_orientation: ModuleOrientation::Vertical,
             source_slider_orientation: ModuleOrientation::Vertical,
@@ -354,10 +361,17 @@ impl Module<Button> for VolumeModule {
 
         let rx = context.subscribe();
         rx.recv_glib(
-            (&self.icons, &self.format),
-            move |(icons, format), event| match event {
+            (&self.icons, &self.format, &self.mute_format),
+            move |(icons, format, mute_format), event| match event {
                 Event::AddSink(sink) | Event::UpdateSink(sink) if sink.active => {
-                    let label = format
+                    let fmt = if sink.muted {
+                        sink_label.add_css_class("muted");
+                        mute_format
+                    } else {
+                        sink_label.remove_css_class("muted");
+                        format
+                    };
+                    let label = fmt
                         .replace(
                             "{icon}",
                             icons.volume_icon(sink.muted, sink.volume.percent()),
@@ -368,7 +382,14 @@ impl Module<Button> for VolumeModule {
                     sink_label.set_label_escaped(&label);
                 }
                 Event::AddSource(source) | Event::UpdateSource(source) if source.active => {
-                    let label = format
+                    let fmt = if source.muted {
+                        source_label.add_css_class("muted");
+                        mute_format
+                    } else {
+                        source_label.remove_css_class("muted");
+                        format
+                    };
+                    let label = fmt
                         .replace(
                             "{icon}",
                             icons.mic_icon(source.muted, source.volume.percent()),
