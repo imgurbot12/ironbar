@@ -1,5 +1,7 @@
 mod sink;
 mod sink_input;
+mod source;
+mod source_output;
 
 use crate::channels::SyncSenderExt;
 use crate::{APP_ID, arc_mut, lock, register_client, spawn_blocking};
@@ -12,6 +14,9 @@ use libpulse_binding::proplist::Proplist;
 use libpulse_binding::volume::{ChannelVolumes, Volume};
 pub use sink::Sink;
 pub use sink_input::SinkInput;
+pub use source::Source;
+pub use source_output::SourceOutput;
+
 use std::fmt::{Debug, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
@@ -26,9 +31,17 @@ pub enum Event {
     UpdateSink(Sink),
     RemoveSink(String),
 
+    AddSource(Source),
+    UpdateSource(Source),
+    RemoveSource(String),
+
     AddInput(SinkInput),
     UpdateInput(SinkInput),
     RemoveInput(u32),
+
+    AddOutput(SourceOutput),
+    UpdateOutput(SourceOutput),
+    RemoveOutput(u32),
 }
 
 #[derive(Debug)]
@@ -45,8 +58,11 @@ pub struct Client {
 struct Data {
     sinks: ArcMutVec<Sink>,
     sink_inputs: ArcMutVec<SinkInput>,
+    sources: ArcMutVec<Source>,
+    source_outputs: ArcMutVec<SourceOutput>,
 
     default_sink_name: Arc<Mutex<Option<String>>>,
+    default_source_name: Arc<Mutex<Option<String>>>,
 }
 
 pub enum ConnectionState {
@@ -169,7 +185,8 @@ fn on_state_change(context: &Arc<Mutex<Context>>, data: &Data, tx: &broadcast::S
             info!("connected to server");
 
             let introspect = lock!(context).introspect();
-            let introspect2 = lock!(context).introspect();
+            let introspect_sink = lock!(context).introspect();
+            let introspect_source = lock!(context).introspect();
 
             introspect.get_sink_info_list({
                 let sinks = data.sinks.clone();
@@ -180,12 +197,33 @@ fn on_state_change(context: &Arc<Mutex<Context>>, data: &Data, tx: &broadcast::S
                 move |info| match info {
                     ListResult::Item(_) => sink::add(info, &sinks, &tx),
                     ListResult::End => {
-                        introspect2.get_server_info({
+                        introspect_sink.get_server_info({
                             let sinks = sinks.clone();
                             let default_sink = default_sink.clone();
                             let tx = tx.clone();
 
                             move |info| set_default_sink(info, &sinks, &default_sink, &tx)
+                        });
+                    }
+                    ListResult::Error => error!("Error while receiving sinks"),
+                }
+            });
+
+            introspect.get_source_info_list({
+                let sources = data.sources.clone();
+                let default_source = data.default_source_name.clone();
+
+                let tx = tx.clone();
+
+                move |info| match info {
+                    ListResult::Item(_) => source::add(info, &sources, &tx),
+                    ListResult::End => {
+                        introspect_source.get_server_info({
+                            let sources = sources.clone();
+                            let default_source = default_source.clone();
+                            let tx = tx.clone();
+
+                            move |info| set_default_source(info, &sources, &default_source, &tx)
                         });
                     }
                     ListResult::Error => error!("Error while receiving sinks"),
@@ -199,6 +237,13 @@ fn on_state_change(context: &Arc<Mutex<Context>>, data: &Data, tx: &broadcast::S
                 move |info| sink_input::add(info, &inputs, &tx)
             });
 
+            introspect.get_source_output_info_list({
+                let outputs = data.source_outputs.clone();
+                let tx = tx.clone();
+
+                move |info| source_output::add(info, &outputs, &tx)
+            });
+
             let subscribe_callback = Box::new({
                 let context = context.clone();
                 let data = data.clone();
@@ -209,7 +254,11 @@ fn on_state_change(context: &Arc<Mutex<Context>>, data: &Data, tx: &broadcast::S
 
             lock!(context).set_subscribe_callback(Some(subscribe_callback));
             lock!(context).subscribe(
-                InterestMaskSet::SERVER | InterestMaskSet::SINK_INPUT | InterestMaskSet::SINK,
+                InterestMaskSet::SERVER
+                    | InterestMaskSet::SINK_INPUT
+                    | InterestMaskSet::SINK
+                    | InterestMaskSet::SOURCE_OUTPUT
+                    | InterestMaskSet::SOURCE,
                 |_| (),
             );
         }
@@ -234,9 +283,20 @@ fn on_event(
     trace!("server event: {facility:?}, op: {op:?}, i: {i}");
 
     match facility {
-        Facility::Server => on_server_event(context, &data.sinks, &data.default_sink_name, tx),
+        Facility::Server => on_server_event(
+            context,
+            &data.sinks,
+            &data.sources,
+            &data.default_sink_name,
+            &data.default_source_name,
+            tx,
+        ),
         Facility::Sink => sink::on_event(context, &data.sinks, &data.default_sink_name, tx, op, i),
+        Facility::Source => {
+            source::on_event(context, &data.sources, &data.default_source_name, tx, op, i)
+        }
         Facility::SinkInput => sink_input::on_event(context, &data.sink_inputs, tx, op, i),
+        Facility::SourceOutput => source_output::on_event(context, &data.source_outputs, tx, op, i),
         _ => error!("Received unhandled facility: {facility:?}"),
     }
 }
@@ -244,15 +304,22 @@ fn on_event(
 fn on_server_event(
     context: &Arc<Mutex<Context>>,
     sinks: &ArcMutVec<Sink>,
+    sources: &ArcMutVec<Source>,
     default_sink: &Arc<Mutex<Option<String>>>,
+    default_source: &Arc<Mutex<Option<String>>>,
     tx: &broadcast::Sender<Event>,
 ) {
     lock!(context).introspect().get_server_info({
         let sinks = sinks.clone();
         let default_sink = default_sink.clone();
+        let sources = sources.clone();
+        let default_source = default_source.clone();
         let tx = tx.clone();
 
-        move |info| set_default_sink(info, &sinks, &default_sink, &tx)
+        move |info| {
+            set_default_sink(info, &sinks, &default_sink, &tx);
+            set_default_source(info, &sources, &default_source, &tx);
+        }
     });
 }
 
@@ -280,6 +347,32 @@ fn set_default_sink(
     }
 
     *lock!(default_sink) = default_sink_name;
+}
+
+fn set_default_source(
+    info: &ServerInfo,
+    sources: &ArcMutVec<Source>,
+    default_source: &Arc<Mutex<Option<String>>>,
+    tx: &broadcast::Sender<Event>,
+) {
+    let default_source_name = info.default_source_name.as_ref().map(ToString::to_string);
+
+    if default_source_name != *lock!(default_source)
+        && let Some(ref default_source_name) = default_source_name
+    {
+        if let Some(source) = lock!(sources)
+            .iter_mut()
+            .find(|s| s.name.as_str() == default_source_name.as_str())
+        {
+            source.active = true;
+            debug!("Set source active: {}", source.name);
+            tx.send_expect(Event::UpdateSource(source.clone()));
+        } else {
+            warn!("Couldn't find source: {}", default_source_name);
+        }
+    }
+
+    *lock!(default_source) = default_source_name;
 }
 
 #[derive(Debug, Clone)]

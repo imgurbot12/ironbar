@@ -8,15 +8,20 @@ use serde::Deserialize;
 #[cfg_attr(feature = "extras", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct VolumeProfile {
-    pub(super) icons: Icons,
+    pub(super) icons: SinkIcons,
+    pub(super) mic_icons: SourceIcons,
 }
 
 impl VolumeProfile {
-    fn for_volume_icon(icon: &str) -> Self {
+    fn for_volume_icon(sink_icon: &str) -> Self {
         Self {
-            icons: Icons {
-                volume: icon.to_string(),
-                ..Icons::default()
+            icons: SinkIcons {
+                volume: sink_icon.to_string(),
+                ..SinkIcons::default()
+            },
+            mic_icons: SourceIcons {
+                volume: ''.to_string(),
+                ..SourceIcons::default()
             },
         }
     }
@@ -39,16 +44,37 @@ pub struct VolumeModule {
     /// **Default**: `{icon} {percentage}%`
     pub(super) format: String,
 
+    /// The format string to use for the widget button label when muted.
+    /// For available tokens, see [below](#formatting-tokens).
+    ///
+    /// **Default**: `{icon} {percentage}%`
+    pub(super) mute_format: String,
+
     /// Maximum value to allow volume sliders to reach.
     /// Pulse supports values > 100 but this may result in distortion.
     ///
     /// **Default**: `100`
     pub(super) max_volume: f64,
 
+    /// The orientation of elements in popup
+    ///
+    /// **Default**: horizontal
+    pub(super) popup_orientation: ModuleOrientation,
+
     /// The orientation of the sink slider
     ///
     /// **Default**: vertical
     pub(super) sink_slider_orientation: ModuleOrientation,
+
+    /// The orientation of the source slider
+    ///
+    /// **Default**: vertical
+    pub(super) source_slider_orientation: ModuleOrientation,
+
+    /// Show pulseaudio sink monitors for mic outputs
+    ///
+    /// **Default**: false
+    pub(super) show_monitors: bool,
 
     /// See [profiles](profiles).
     #[serde(flatten)]
@@ -77,8 +103,12 @@ impl Default for VolumeModule {
     fn default() -> Self {
         Self {
             format: "{icon} {percentage}%".to_string(),
+            mute_format: "{icon} {percentage}%".to_string(),
             max_volume: 100.0,
+            popup_orientation: ModuleOrientation::Horizontal,
             sink_slider_orientation: ModuleOrientation::Vertical,
+            source_slider_orientation: ModuleOrientation::Vertical,
+            show_monitors: false,
             profiles: Profiles::default(),
             truncate: None,
             marquee: MarqueeMode::default(),
@@ -91,7 +121,7 @@ impl Default for VolumeModule {
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "extras", derive(schemars::JsonSchema))]
 #[serde(default)]
-pub struct Icons {
+pub struct SinkIcons {
     /// Icon to show to represent each volume level.
     ///
     ///  **Default**: `󰕾`
@@ -103,11 +133,35 @@ pub struct Icons {
     pub(super) muted: String,
 }
 
-impl Default for Icons {
+impl Default for SinkIcons {
     fn default() -> Self {
         Self {
             volume: "󰕾".to_string(),
             muted: "󰝟".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "extras", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct SourceIcons {
+    /// Icon to show to represent each volume level.
+    ///
+    ///  **Default**: ``
+    pub(super) volume: String,
+
+    /// Icon to show for muted inputs.
+    ///
+    /// **Default**: ``
+    pub(super) muted: String,
+}
+
+impl Default for SourceIcons {
+    fn default() -> Self {
+        Self {
+            volume: "".to_string(),
+            muted: "".to_string(),
         }
     }
 }

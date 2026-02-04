@@ -204,7 +204,9 @@ impl IronbarLabelExt for Label {
         if label.contains("<span") {
             self.set_label(label);
         } else {
-            self.set_label(&markup_escape_text(label));
+            let text = markup_escape_text(label);
+            let text = text.as_str().replace("&apos;", "'");
+            self.set_label(&text);
         }
     }
 
